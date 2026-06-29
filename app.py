@@ -12,7 +12,6 @@ from authlib.integrations.starlette_client import OAuth
 import config
 import database as db
 import render_scan
-import browser_session
 
 # Jinja2 environment (avoids Python 3.14 incompatibility in Jinja2Templates wrapper)
 _jinja_env = Environment(loader=FileSystemLoader(str(Path(__file__).parent / "templates")), cache_size=0)
@@ -296,369 +295,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>
 """
 
-BROWSER_VIEW_HTML = """<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Browser Viewer — SCANNOW</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:#1a1d23; color:#e4e6eb; font-family:sans-serif; }
-.container { max-width:1400px; margin:0 auto; padding:16px; }
-.header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
-.header h1 { font-size:20px; }
-.btn { padding:8px 20px; border-radius:8px; border:none; cursor:pointer; font-weight:600; font-size:14px; }
-.btn-primary { background:#2563EB; color:white; }
-.btn-success { background:#059669; color:white; }
-.btn-danger { background:#DC2626; color:white; }
-.btn:disabled { opacity:.5; cursor:not-allowed; }
-.browser-frame { background:#000; border-radius:12px; overflow:hidden; position:relative; }
-#browser-img { display:block; width:100%; cursor:crosshair; user-select:none; }
-#click-indicator { position:absolute; width:20px; height:20px; border:2px solid #F59E0B; border-radius:50%; pointer-events:none; display:none; transform:translate(-50%,-50%); }
-.toolbar { display:flex; gap:8px; padding:12px 0; flex-wrap:wrap; align-items:center; }
-.toolbar input[type="text"] { flex:1; min-width:200px; padding:10px 16px; border-radius:8px; border:1px solid #374151; background:#2a2d35; color:#e4e6eb; font-size:14px; }
-.url-bar { padding:8px 12px; background:#111; color:#9ca3af; font-size:12px; font-family:monospace; border-bottom:1px solid #333; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.status-bar { padding:8px 12px; background:#2a2d35; border-radius:8px; margin-top:8px; font-size:13px; color:#9ca3af; }
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="header">
-    <h1>🖥️ Remote Browser</h1>
-    <div>
-      <button class="btn btn-success" id="scan-btn" onclick="startScan()" disabled>🚀 เริ่มสแกน</button>
-      <button class="btn btn-danger" onclick="closeBrowser()">✕ ปิด</button>
-    </div>
-  </div>
-  <div class="browser-frame">
-    <div class="url-bar" id="url-bar">Loading...</div>
-    <img id="browser-img" src="" alt="Browser" onclick="handleClick(event)">
-    <div id="click-indicator"></div>
-  </div>
-  <div class="toolbar">
-    <button class="btn btn-primary" onclick="pressKey('Enter')">↵ Enter</button>
-    <button class="btn btn-primary" onclick="pressKey('Tab')">⇥ Tab</button>
-    <button class="btn btn-primary" onclick="pressKey('Escape')">Esc</button>
-    <input type="text" id="type-input" placeholder="พิมพ์ข้อความแล้วกด Enter..." onkeydown="if(event.key=='Enter')typeText()">
-    <button class="btn btn-primary" onclick="typeText()">ส่ง</button>
-    <button class="btn" onclick="refreshScreenshot()" style="background:#374151;color:white">⟳ Refresh</button>
-  </div>
-  <div class="status-bar" id="status-bar">คลิกที่หน้าจอเพื่อโต้ตอบกับ Facebook</div>
-</div>
-<script>
-let pollTimer = setInterval(refreshScreenshot, 2000);
-function showToast(msg, type) {
-  const t = document.getElementById("toast") || (()=>{const d=document.createElement("div");d.id="toast";d.style.cssText="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:8px;z-index:1000";document.body.appendChild(d);return d;})();
-  t.textContent=msg; t.style.background=type==="error"?"#DC2626":type==="success"?"#059669":"#2563EB"; t.style.color="white";
-  setTimeout(()=>t.style.display="none",3000); t.style.display="block";
-}
-async function refreshScreenshot() {
-  try {
-    const r=await fetch("/api/scan/browser-screenshot"); const d=await r.json();
-    if(d.status==="ok") { document.getElementById("browser-img").src="data:image/png;base64,"+d.data; document.getElementById("url-bar").textContent=d.url||"?"; document.getElementById("scan-btn").disabled=false; }
-    else if(d.status==="no_session") { clearInterval(pollTimer); showToast("🔌 Browser closed","error"); }
-  } catch(e){}
-}
-async function handleClick(e) {
-  const img=document.getElementById("browser-img"); const rect=img.getBoundingClientRect();
-  const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  const ind=document.getElementById("click-indicator");
-  ind.style.display="block"; ind.style.left=x+"px"; ind.style.top=y+"px";
-  setTimeout(()=>ind.style.display="none",500);
-  await fetch("/api/scan/browser-click",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({x,y})});
-  setTimeout(refreshScreenshot,600);
-}
-async function typeText() {
-  const inp=document.getElementById("type-input"); const t=inp.value; if(!t) return;
-  await fetch("/api/scan/browser-type",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});
-  inp.value=""; setTimeout(refreshScreenshot,500);
-}
-async function pressKey(key) {
-  await fetch("/api/scan/browser-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})});
-  setTimeout(refreshScreenshot,500);
-}
-async function startScan() {
-  const btn=document.getElementById("scan-btn"); btn.disabled=true; btn.textContent="⏳ กำลังสแกน...";
-  const r=await fetch("/api/scan/run-scan",{method:"POST"}); const d=await r.json();
-  if(d.status==="error") { showToast("❌ "+d.message,"error"); btn.disabled=false; btn.textContent="🚀 เริ่มสแกน"; }
-  else { showToast("✅ กำลังสแกน...","success"); setTimeout(()=>window.location.href="/dashboard",2000); }
-}
-async function closeBrowser() {
-  await fetch("/api/scan/close-browser"); clearInterval(pollTimer);
-  showToast("🔌 Closed","success"); setTimeout(()=>window.location.href="/dashboard",1000);
-}
-refreshScreenshot();
-</script>
-</body>
-</html>"""
-
-app = FastAPI(title="SCANNOW")
-
-# Session
-app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET)
-
-# OAuth setup
-oauth = OAuth()
-oauth.register(
-    name="google",
-    client_id=config.GOOGLE_CLIENT_ID,
-    client_secret=config.GOOGLE_CLIENT_SECRET,
-    access_token_url="https://oauth2.googleapis.com/token",
-    authorize_url="https://accounts.google.com/o/oauth2/auth",
-    client_kwargs={"scope": "openid email profile"},
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-)
-
-# Scan lock (prevent concurrent scans)
-_scan_lock = threading.Lock()
-_scan_status = {"running": False, "last_output": "", "error": ""}
-
-# ─── Auth helpers ───
-
-def get_user(request: Request):
-    user = request.session.get("user")
-    if user and user.get("email") == config.ALLOWED_EMAIL:
-        return user
-    return None
-
-def require_user(request: Request):
-    user = get_user(request)
-    if not user:
-        raise HTTPException(status_code=303, detail="Login required")
-    return user
-
-# ─── Routes ───
-
-@app.get("/")
-async def root(request: Request):
-    try:
-        user = get_user(request)
-        if user:
-            return RedirectResponse(url="/dashboard")
-        return HTMLResponse(LOGIN_HTML)
-    except Exception as e:
-        return HTMLResponse(f"<pre>Root error: {e}</pre>", status_code=500)
-
-@app.get("/login")
-async def login_page(request: Request):
-    if get_user(request):
-        return RedirectResponse(url="/dashboard")
-    return HTMLResponse(LOGIN_HTML)
-
-@app.get("/auth/login")
-async def auth_login(request: Request):
-    if not config.GOOGLE_CLIENT_ID or not config.GOOGLE_CLIENT_SECRET:
-        return HTMLResponse("""
-        <html><body style="background:#1a1d23;color:#e4e6eb;font-family:sans-serif;padding:40px;text-align:center">
-        <h2>⚠️ ยังไม่ได้ตั้งค่า Google OAuth</h2>
-        <p style="color:#9ca3af;margin:20px 0">กรุณาตั้งค่าตัวแปรแวดล้อมก่อน:</p>
-        <pre style="background:#2a2d35;padding:20px;border-radius:10px;text-align:left;display:inline-block">
-export GOOGLE_CLIENT_ID='your-client-id'
-export GOOGLE_CLIENT_SECRET='your-client-secret'
-export GOOGLE_REDIRECT_URI='""" + str(config.GOOGLE_REDIRECT_URI) + """'
-cd ~/condo-demand-output/webapp
-python3 start.py
-        </pre>
-        <p style="color:#6b7280;margin-top:20px;font-size:12px">
-        1. ไปที่ <a href="https://console.cloud.google.com/apis/credentials" style="color:#60a5fa">Google Cloud Console</a><br>
-        2. สร้าง OAuth 2.0 Client ID (Web application)<br>
-        3. เพิ่ม Authorized redirect URI: <code style="background:#374151;padding:2px 6px;border-radius:4px">""" + str(config.GOOGLE_REDIRECT_URI) + """/auth/callback</code><br>
-        4. คัดลอก Client ID และ Client Secret
-        </p>
-        </body></html>""", status_code=400)
-    redirect_uri = config.GOOGLE_REDIRECT_URI
-    print(f"OAuth redirect URI: {redirect_uri}")
-    return await oauth.google.authorize_redirect(request, redirect_uri)
-
-@app.get("/auth/callback")
-async def auth_callback(request: Request):
-    try:
-        token = await oauth.google.authorize_access_token(request)
-        user_info = token.get("userinfo")
-        if not user_info:
-            resp = await oauth.google.get("https://www.googleapis.com/oauth2/v2/userinfo")
-            user_info = resp.json()
-        email = user_info.get("email", "")
-        if email != config.ALLOWED_EMAIL:
-            return HTMLResponse("❌ Access denied. Only sorlakom.thana@gmail.com can access.", status_code=403)
-        request.session["user"] = {
-            "email": email,
-            "name": user_info.get("name", email),
-            "picture": user_info.get("picture", ""),
-        }
-        return RedirectResponse(url="/dashboard")
-    except Exception as e:
-        return HTMLResponse(f"❌ Auth error: {e}", status_code=400)
-
-@app.get("/logout")
-async def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse(url="/")
-
-# ─── Dashboard ───
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, user=Depends(require_user)):
-    stats = db.get_stats()
-    scans = db.get_recent_scans(10)
-    leads = db.get_leads(limit=50)
-    return HTMLResponse(_jinja_env.get_template("dashboard.html").render(
-        request=request, user=user, stats=stats, leads=leads, scans=scans,
-        scan_status=_scan_status,
-    ))
-
-@app.get("/api/stats")
-async def api_stats(user=Depends(require_user)):
-    stats = db.get_stats()
-    return JSONResponse(stats)
-
-@app.get("/api/leads")
-async def api_leads(search: str = "", filter: str = "", limit: int = 100, user=Depends(require_user)):
-    leads = db.get_leads(search=search, status_filter=filter, limit=limit)
-    return JSONResponse({"leads": leads, "count": len(leads)})
-
-@app.get("/api/scans")
-async def api_scans(limit: int = 10, user=Depends(require_user)):
-    scans = db.get_recent_scans(limit)
-    return JSONResponse({"scans": scans})
-
-# Global browser session (interactive)
-_browser_session = None
-_browser_lock = threading.Lock()
 
 @app.post("/api/scan")
 async def trigger_scan(request: Request, user=Depends(require_user)):
-    """Start interactive browser session — user logs into Facebook manually."""
-    global _scan_status, _browser_session
+    """Run Facebook scan using cookies from FB_COOKIES env var."""
+    global _scan_status
     if _scan_status["running"]:
         return JSONResponse({"status": "already_running", "message": "Scan already in progress"})
     
-    with _browser_lock:
-        if _browser_session and _browser_session.running:
-            return JSONResponse({"status": "session_exists", "message": "Browser already open"})
-        _browser_session = browser_session.BrowserSession()
+    _scan_status = {"running": True, "last_output": "", "error": ""}
     
-    def start_and_wait():
-        global _scan_status, _browser_session
-        try:
-            _scan_status = {"running": True, "last_output": "กำลังเปิด Facebook...", "error": "", "step": "browser_start"}
-            with _browser_lock:
-                _browser_session.start()
-            _scan_status["last_output"] = "✅ เบราว์เซอร์เปิดแล้ว — กรุณาล็อกอิน Facebook ในหน้าต่างที่แสดง"
-            _scan_status["step"] = "waiting_login"
-        except Exception as e:
-            _scan_status["running"] = False
-            _scan_status["error"] = str(e)
-            _scan_status["last_output"] = f"❌ เปิดเบราว์เซอร์ล้มเหลว: {e}"
-    
-    threading.Thread(target=start_and_wait, daemon=True).start()
-    return JSONResponse({"status": "started", "message": "🚀 กำลังเปิดเบราว์เซอร์..."})
-
-@app.get("/api/scan/browser-view")
-async def browser_view(user=Depends(require_user)):
-    """Return browser viewer page (interactive screenshot)."""
-    return HTMLResponse(BROWSER_VIEW_HTML)
-
-@app.get("/api/scan/browser-screenshot")
-async def browser_screenshot(user=Depends(require_user)):
-    """Get current browser screenshot as base64."""
-    global _browser_session
-    with _browser_lock:
-        if not _browser_session or not _browser_session.running:
-            return JSONResponse({"status": "no_session"})
-        b64 = _browser_session.screenshot()
-        if b64:
-            return JSONResponse({"status": "ok", "data": b64, "url": _browser_session.get_url()})
-        return JSONResponse({"status": "error"})
-
-@app.post("/api/scan/browser-click")
-async def browser_click(request: Request, user=Depends(require_user)):
-    """Click at coordinates (x, y) in the browser viewport."""
-    global _browser_session
-    body = await request.json()
-    x, y = body.get("x"), body.get("y")
-    with _browser_lock:
-        if not _browser_session or not _browser_session.running:
-            return JSONResponse({"status": "no_session"})
-        ok = _browser_session.click(x, y)
-        return JSONResponse({"status": "ok" if ok else "error"})
-
-@app.post("/api/scan/browser-type")
-async def browser_type(request: Request, user=Depends(require_user)):
-    """Type text into focused element."""
-    global _browser_session
-    body = await request.json()
-    text = body.get("text", "")
-    with _browser_lock:
-        if not _browser_session or not _browser_session.running:
-            return JSONResponse({"status": "no_session"})
-        ok = _browser_session.type_text(text)
-        return JSONResponse({"status": "ok" if ok else "error"})
-
-@app.post("/api/scan/browser-key")
-async def browser_key(request: Request, user=Depends(require_user)):
-    """Press a keyboard key (Enter, Tab, etc.)."""
-    global _browser_session
-    body = await request.json()
-    key = body.get("key", "")
-    with _browser_lock:
-        if not _browser_session or not _browser_session.running:
-            return JSONResponse({"status": "no_session"})
-        ok = _browser_session.press_key(key)
-        return JSONResponse({"status": "ok" if ok else "error"})
-
-@app.post("/api/scan/run-scan")
-async def run_facebook_scan(request: Request, user=Depends(require_user)):
-    """After login, run the Facebook scan using the current session."""
-    global _scan_status, _browser_session
-    with _browser_lock:
-        if not _browser_session or not _browser_session.running:
-            return JSONResponse({"status": "error", "message": "No browser session"})
-        if not _browser_session.is_logged_in():
-            return JSONResponse({"status": "error", "message": "ยังไม่ได้ล็อกอิน Facebook"})
-    
-    def do_scan():
-        global _scan_status, _browser_session
-        _scan_status["step"] = "scanning"
-        _scan_status["last_output"] = "กำลังสแกน 7 กลุ่ม..."
+    def run_scan():
+        global _scan_status
         try:
             scan_id = db.create_scan()
-            leads = _browser_session.run_facebook_scan()
+            import base64, tempfile, json as jmod
+            fb_b64 = os.environ.get("FB_COOKIES", "")
+            cookies_file = None
+            if fb_b64:
+                try:
+                    cd = jmod.loads(base64.b64decode(fb_b64).decode())
+                    t = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+                    jmod.dump(cd, t); t.close(); cookies_file = t.name
+                except Exception as ce:
+                    _scan_status["error"] = f"Cookie: {ce}"
+            leads = render_scan.scan_facebook(cookies_file=cookies_file)
+            if cookies_file and os.path.exists(cookies_file): os.unlink(cookies_file)
+            for l in leads:
+                if not l.get("dk"):
+                    n = l.get("n","").strip().lower(); u = l.get("url","")
+                    l["dk"] = n + "|" + (u[:120] if u else "") 
             new_in_db = db.upsert_leads(scan_id, leads) if leads else 0
             db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
-            if new_in_db > 0:
-                send_new_leads_telegram()
-            with _browser_lock:
-                _browser_session.close()
-                _browser_session = None
+            if new_in_db > 0: send_new_leads_telegram()
             _scan_status["running"] = False
-            _scan_status["last_output"] = f"✅ สแกนเสร็จ: {new_in_db} new / {len(leads)} total"
-            _scan_status["step"] = "done"
+            _scan_status["last_output"] = f"✅ Scan: {new_in_db} new / {len(leads)} total"
         except Exception as e:
-            with _browser_lock:
-                _browser_session.close()
-                _browser_session = None
-            _scan_status["running"] = False
-            _scan_status["error"] = str(e)
-            _scan_status["last_output"] = f"❌ Error: {e}"
-            _scan_status["step"] = "error"
+            _scan_status["running"] = False; _scan_status["error"] = str(e)
+            _scan_status["last_output"] = f"❌ {e}"
     
-    threading.Thread(target=do_scan, daemon=True).start()
-    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน..."})
+    threading.Thread(target=run_scan, daemon=True).start()
+    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน 7 กลุ่ม..."})
 
-@app.get("/api/scan/close-browser")
-async def close_browser(user=Depends(require_user)):
-    """Close the browser session."""
-    global _browser_session
-    with _browser_lock:
-        if _browser_session:
-            _browser_session.close()
-            _browser_session = None
-    return JSONResponse({"status": "closed"})
-
-
-@app.get("/api/scan-status")
 async def scan_status(user=Depends(require_user)):
     return JSONResponse(_scan_status)
 
