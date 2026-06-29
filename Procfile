@@ -1,2 +1,0 @@
-web: gunicorn -w 2 -k uvicorn.workers.UvicornWorker app:app
-# Render deploy test
