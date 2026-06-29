@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCANNOW — Bangkok Condo Demand</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Prompt', sans-serif; }
+        body { background: #1a1d23; }
+        .card { background: #2a2d35; border-radius: 12px; padding: 24px; }
+        .btn-primary { background: #2563EB; color: white; padding: 12px 32px; border-radius: 12px; font-weight: 600; transition: all 0.2s; }
+        .btn-primary:hover { background: #1D4ED8; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .badge-new { background: #f59e0b; color: #1c1e21; }
+        .badge-raw { background: #059669; color: white; }
+        .badge-preview { background: #6b7280; color: white; }
+        .stat-box { background: #2a2d35; border-radius: 10px; padding: 16px; text-align: center; flex: 1; min-width: 120px; }
+        .stat-number { font-size: 28px; font-weight: 700; }
+        .scan-btn { background: linear-gradient(135deg, #059669, #047857); color: white; border: none; padding: 16px 48px; border-radius: 16px; font-size: 18px; font-weight: 700; cursor: pointer; transition: all 0.3s; }
+        .scan-btn:hover { transform: scale(1.02); box-shadow: 0 8px 25px rgba(5, 150, 105, 0.3); }
+        .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .scan-btn.running { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div class="card max-w-md w-full text-center">
+        <div class="text-5xl mb-4">🏢</div>
+        <h1 class="text-2xl font-bold text-white mb-2">SCANNOW</h1>
+        <p class="text-gray-400 mb-6">Bangkok Condo Demand Intelligence</p>
+        <a href="/auth/login" class="btn-primary inline-block">
+            เข้าสู่ระบบด้วย Google
+        </a>
+        <p class="text-gray-500 text-xs mt-4">เฉพาะผู้ได้รับอนุญาตเท่านั้น</p>
+    </div>
+</body>
+</html>
