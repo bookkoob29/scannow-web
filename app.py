@@ -11,6 +11,7 @@ from authlib.integrations.starlette_client import OAuth
 
 import config
 import database as db
+import render_scan
 
 # Jinja2 environment (avoids Python 3.14 incompatibility in Jinja2Templates wrapper)
 _jinja_env = Environment(loader=FileSystemLoader(str(Path(__file__).parent / "templates")), cache_size=0)
@@ -434,54 +435,37 @@ async def trigger_scan(request: Request, user=Depends(require_user)):
     if _scan_status["running"]:
         return JSONResponse({"status": "already_running", "message": "Scan already in progress"})
     
-    # Check if scan script exists (local machine only)
-    scan_script = config.SCAN_SCRIPT
-    if not scan_script or not os.path.exists(scan_script):
-        return JSONResponse({
-            "status": "local_only",
-            "message": "⚠️ การสแกน Facebook ทำงานเฉพาะบนเครื่องของคุณผ่าน Cron เท่านั้น\n\nกดปุ่มนี้บนเครื่อง Mac ที่ตั้งค่าไว้ หรือรอให้ Cron ทำงานและดึงข้อมูลล่าสุดจาก Dashboard",
-        })
-    
     _scan_status = {"running": True, "last_output": "", "error": ""}
     
     def run_scan():
         global _scan_status
         try:
             scan_id = db.create_scan()
-            output_lines = []
             
-            # Run the scan script
-            result = subprocess.run(
-                [sys.executable, config.SCAN_SCRIPT, "--web-mode"],
-                capture_output=True, text=True, timeout=180,
-                cwd=os.path.dirname(config.SCAN_SCRIPT),
-            )
-            output = result.stdout + result.stderr
-            output_lines.append(output)
-            _scan_status["last_output"] = output[-500:]
+            # Decode Facebook cookies from env var
+            import base64, tempfile, json
+            fb_cookies_b64 = os.environ.get("FB_COOKIES", "")
+            cookies_file = None
+            if fb_cookies_b64:
+                try:
+                    cookies_data = json.loads(base64.b64decode(fb_cookies_b64).decode())
+                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+                    json.dump(cookies_data, tmp)
+                    tmp.close()
+                    cookies_file = tmp.name
+                except Exception as e:
+                    _scan_status["error"] = f"Cookie decode error: {e}"
             
-            # Parse output for lead count
-            new_count = 0
-            total_count = 0
-            raw_count = 0
-            for line in output.split("\n"):
-                m = re.search(r"Scanned:\s*(\d+)\s+new.*?(\d+)\s+RAW", line)
-                if m:
-                    new_count = int(m.group(1))
-                    raw_count = int(m.group(2))
-                m = re.search(r"Merged:\s*(\d+)\s+total.*?(\d+)\s+new", line)
-                if m:
-                    total_count = int(m.group(1))
+            # Run scan using Playwright on Render
+            leads = render_scan.scan_facebook(cookies_file=cookies_file)
             
-            # Sync leads from persistent storage to DB
-            leads_file = os.path.expanduser("~/.hermes/data/scannow_leads.json")
-            if os.path.exists(leads_file):
-                with open(leads_file) as f:
-                    stored = json.load(f)
-                leads_list = list(stored.values()) if isinstance(stored, dict) else stored
-                
-                # Add dedup keys to leads
-                for lead in leads_list:
+            # Clean up temp file
+            if cookies_file and os.path.exists(cookies_file):
+                os.unlink(cookies_file)
+            
+            # Add dedup keys and save to database
+            for lead in leads:
+                if not lead.get("dk"):
                     name = lead.get("n","").strip().lower()
                     url = lead.get("url","")
                     if url:
@@ -489,31 +473,25 @@ async def trigger_scan(request: Request, user=Depends(require_user)):
                         lead["dk"] = name + "|" + clean_url
                     else:
                         lead["dk"] = name + lead.get("f","")[:120]
-                
-                new_in_db = db.upsert_leads(scan_id, leads_list)
-            else:
-                new_in_db = 0
             
-            db.finish_scan(scan_id, new_in_db, total_count, raw_count)
+            new_in_db = db.upsert_leads(scan_id, leads) if leads else 0
+            db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
             
-            # Send Telegram notification for new leads
+            # Send Telegram for new leads
             if new_in_db > 0:
                 send_new_leads_telegram()
             
             _scan_status["running"] = False
+            _scan_status["last_output"] = f"✅ Scan complete: {new_in_db} new leads, {len(leads)} total"
             
-        except subprocess.TimeoutExpired:
-            _scan_status["running"] = False
-            _scan_status["error"] = "Scan timed out (180s)"
-            db.finish_scan(scan_id, 0, 0, 0, error="Timeout")
         except Exception as e:
             _scan_status["running"] = False
             _scan_status["error"] = str(e)
-            db.finish_scan(scan_id, 0, 0, 0, error=str(e))
+            _scan_status["last_output"] = f"❌ Error: {e}"
     
-    thread = threading.Thread(target=run_scan, daemon=True)
-    thread.start()
-    return JSONResponse({"status": "started", "message": "Scan started"})
+    threading.Thread(target=run_scan, daemon=True).start()
+    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน 7 กลุ่ม..."})
+
 
 @app.get("/api/scan-status")
 async def scan_status(user=Depends(require_user)):

@@ -160,10 +160,6 @@
                 const data = await resp.json();
                 if (data.status === 'already_running') {
                     showToast('❌ สแกนกำลังทำงานอยู่', 'error');
-                } else if (data.status === 'local_only') {
-                    showToast('⚠️ การสแกนทำงานบนเครื่อง Mac เท่านั้น', 'info');
-                    btn.disabled = false; btn.classList.remove('running');
-                    btn.textContent = '🚀 SCANNOW';
                 } else {
                     showToast('✅ เริ่มสแกนแล้ว', 'success');
                     pollStatus();
