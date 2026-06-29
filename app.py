@@ -295,6 +295,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>
 """
 
+app = FastAPI(title="SCANNOW")
+
+# Session
+app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET)
 
 @app.post("/api/scan")
 async def trigger_scan(request: Request, user=Depends(require_user)):
