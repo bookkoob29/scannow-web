@@ -296,6 +296,103 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>
 """
 
+BROWSER_VIEW_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Browser Viewer — SCANNOW</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#1a1d23; color:#e4e6eb; font-family:sans-serif; }
+.container { max-width:1400px; margin:0 auto; padding:16px; }
+.header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.header h1 { font-size:20px; }
+.btn { padding:8px 20px; border-radius:8px; border:none; cursor:pointer; font-weight:600; font-size:14px; }
+.btn-primary { background:#2563EB; color:white; }
+.btn-success { background:#059669; color:white; }
+.btn-danger { background:#DC2626; color:white; }
+.btn:disabled { opacity:.5; cursor:not-allowed; }
+.browser-frame { background:#000; border-radius:12px; overflow:hidden; position:relative; }
+#browser-img { display:block; width:100%; cursor:crosshair; user-select:none; }
+#click-indicator { position:absolute; width:20px; height:20px; border:2px solid #F59E0B; border-radius:50%; pointer-events:none; display:none; transform:translate(-50%,-50%); }
+.toolbar { display:flex; gap:8px; padding:12px 0; flex-wrap:wrap; align-items:center; }
+.toolbar input[type="text"] { flex:1; min-width:200px; padding:10px 16px; border-radius:8px; border:1px solid #374151; background:#2a2d35; color:#e4e6eb; font-size:14px; }
+.url-bar { padding:8px 12px; background:#111; color:#9ca3af; font-size:12px; font-family:monospace; border-bottom:1px solid #333; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.status-bar { padding:8px 12px; background:#2a2d35; border-radius:8px; margin-top:8px; font-size:13px; color:#9ca3af; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🖥️ Remote Browser</h1>
+    <div>
+      <button class="btn btn-success" id="scan-btn" onclick="startScan()" disabled>🚀 เริ่มสแกน</button>
+      <button class="btn btn-danger" onclick="closeBrowser()">✕ ปิด</button>
+    </div>
+  </div>
+  <div class="browser-frame">
+    <div class="url-bar" id="url-bar">Loading...</div>
+    <img id="browser-img" src="" alt="Browser" onclick="handleClick(event)">
+    <div id="click-indicator"></div>
+  </div>
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="pressKey('Enter')">↵ Enter</button>
+    <button class="btn btn-primary" onclick="pressKey('Tab')">⇥ Tab</button>
+    <button class="btn btn-primary" onclick="pressKey('Escape')">Esc</button>
+    <input type="text" id="type-input" placeholder="พิมพ์ข้อความแล้วกด Enter..." onkeydown="if(event.key=='Enter')typeText()">
+    <button class="btn btn-primary" onclick="typeText()">ส่ง</button>
+    <button class="btn" onclick="refreshScreenshot()" style="background:#374151;color:white">⟳ Refresh</button>
+  </div>
+  <div class="status-bar" id="status-bar">คลิกที่หน้าจอเพื่อโต้ตอบกับ Facebook</div>
+</div>
+<script>
+let pollTimer = setInterval(refreshScreenshot, 2000);
+function showToast(msg, type) {
+  const t = document.getElementById("toast") || (()=>{const d=document.createElement("div");d.id="toast";d.style.cssText="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:8px;z-index:1000";document.body.appendChild(d);return d;})();
+  t.textContent=msg; t.style.background=type==="error"?"#DC2626":type==="success"?"#059669":"#2563EB"; t.style.color="white";
+  setTimeout(()=>t.style.display="none",3000); t.style.display="block";
+}
+async function refreshScreenshot() {
+  try {
+    const r=await fetch("/api/scan/browser-screenshot"); const d=await r.json();
+    if(d.status==="ok") { document.getElementById("browser-img").src="data:image/png;base64,"+d.data; document.getElementById("url-bar").textContent=d.url||"?"; document.getElementById("scan-btn").disabled=false; }
+    else if(d.status==="no_session") { clearInterval(pollTimer); showToast("🔌 Browser closed","error"); }
+  } catch(e){}
+}
+async function handleClick(e) {
+  const img=document.getElementById("browser-img"); const rect=img.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  const ind=document.getElementById("click-indicator");
+  ind.style.display="block"; ind.style.left=x+"px"; ind.style.top=y+"px";
+  setTimeout(()=>ind.style.display="none",500);
+  await fetch("/api/scan/browser-click",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({x,y})});
+  setTimeout(refreshScreenshot,600);
+}
+async function typeText() {
+  const inp=document.getElementById("type-input"); const t=inp.value; if(!t) return;
+  await fetch("/api/scan/browser-type",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});
+  inp.value=""; setTimeout(refreshScreenshot,500);
+}
+async function pressKey(key) {
+  await fetch("/api/scan/browser-key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})});
+  setTimeout(refreshScreenshot,500);
+}
+async function startScan() {
+  const btn=document.getElementById("scan-btn"); btn.disabled=true; btn.textContent="⏳ กำลังสแกน...";
+  const r=await fetch("/api/scan/run-scan",{method:"POST"}); const d=await r.json();
+  if(d.status==="error") { showToast("❌ "+d.message,"error"); btn.disabled=false; btn.textContent="🚀 เริ่มสแกน"; }
+  else { showToast("✅ กำลังสแกน...","success"); setTimeout(()=>window.location.href="/dashboard",2000); }
+}
+async function closeBrowser() {
+  await fetch("/api/scan/close-browser"); clearInterval(pollTimer);
+  showToast("🔌 Closed","success"); setTimeout(()=>window.location.href="/dashboard",1000);
+}
+refreshScreenshot();
+</script>
+</body>
+</html>"""
+
 app = FastAPI(title="SCANNOW")
 
 # Session
