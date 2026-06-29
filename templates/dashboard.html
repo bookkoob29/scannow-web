@@ -146,13 +146,17 @@
         }
 
         async function triggerScan() {
-            // Instead of direct scan, open interactive browser viewer
-            window.open('/api/scan/browser-view', 'browser_view', 'width=1300,height=900');
-            // Also POST to /api/scan to start the browser behind the scenes
+            // Show inline browser modal
+            document.getElementById('browser-modal').classList.remove('hidden');
+            document.getElementById('status-text').textContent = '🖥️ กำลังเปิดเบราว์เซอร์...';
             try {
                 const resp = await fetch('/api/scan', { method: 'POST' });
                 const data = await resp.json();
-                showToast('🖥️ เปิดบราวเซอร์แล้ว → กรุณาล็อกอิน Facebook', 'info');
+                if (data.status === 'already_running' || data.status === 'session_exists') {
+                    showToast('🖥️ กำลังทำงานอยู่', 'info');
+                } else {
+                    showToast('🖥️ เปิดเบราว์เซอร์แล้ว', 'info');
+                }
             } catch(e) {
                 showToast('❌ เกิดข้อผิดพลาด', 'error');
             }
@@ -217,6 +221,134 @@
                 });
             } catch(e) {}
         }
+    </script>
+
+    <!-- Browser Modal (inline, no popup) -->
+    <div id="browser-modal" class="hidden fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.8)">
+        <div class="bg-[#1a1d23] rounded-xl w-full max-w-6xl max-h-[90vh] overflow-auto">
+            <div class="flex justify-between items-center p-4 border-b border-gray-700">
+                <h2 class="text-lg font-bold text-white">🖥️ Remote Browser</h2>
+                <div class="flex gap-2">
+                    <button id="scan-start-btn" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-emerald-700 disabled:opacity-50" onclick="startScan()" disabled>🚀 เริ่มสแกน</button>
+                    <button class="bg-red-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-red-700" onclick="closeModal()">✕ ปิด</button>
+                </div>
+            </div>
+            <div class="bg-black relative">
+                <div class="text-gray-400 text-xs font-mono px-4 py-2 bg-gray-900 border-b border-gray-800 truncate" id="modal-url">Loading...</div>
+                <img id="modal-browser-img" src="" alt="Browser" class="w-full cursor-crosshair" onclick="handleBrowserClick(event)" style="user-select:none">
+                <div id="modal-click-pt" class="absolute w-5 h-5 border-2 border-yellow-400 rounded-full pointer-events-none hidden" style="transform:translate(-50%,-50%)"></div>
+            </div>
+            <div class="flex gap-2 p-4 flex-wrap items-center border-t border-gray-700">
+                <button class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700" onclick="pressKey('Enter')">↵ Enter</button>
+                <button class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700" onclick="pressKey('Tab')">⇥ Tab</button>
+                <button class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700" onclick="pressKey('Escape')">Esc</button>
+                <input id="modal-type-input" type="text" placeholder="พิมพ์ข้อความแล้วกด Enter..." class="flex-1 min-w-[150px] px-3 py-2 rounded-lg border border-gray-600 bg-gray-800 text-white text-sm" onkeydown="if(event.key==='Enter')typeText()">
+                <button class="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700" onclick="typeText()">ส่ง</button>
+                <button class="bg-gray-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-700" onclick="refreshBrowser()">⟳ Refresh</button>
+            </div>
+            <div class="px-4 pb-4 text-gray-400 text-xs" id="modal-status">คลิกที่หน้าจอเพื่อโต้ตอบกับ Facebook</div>
+        </div>
+    </div>
+
+    <script>
+        let modalPoll = null;
+
+        function closeModal() {
+            document.getElementById('browser-modal').classList.add('hidden');
+            if (modalPoll) { clearInterval(modalPoll); modalPoll = null; }
+            fetch('/api/scan/close-browser').catch(()=>{});
+        }
+
+        async function refreshBrowser() {
+            try {
+                const r = await fetch('/api/scan/browser-screenshot');
+                const d = await r.json();
+                if (d.status === 'ok') {
+                    document.getElementById('modal-browser-img').src = 'data:image/png;base64,' + d.data;
+                    document.getElementById('modal-url').textContent = d.url || '?';
+                    document.getElementById('scan-start-btn').disabled = false;
+                } else if (d.status === 'no_session') {
+                    document.getElementById('modal-status').textContent = '🔌 กำลังเชื่อมต่อเบราว์เซอร์...';
+                }
+            } catch(e) {}
+        }
+
+        async function handleBrowserClick(e) {
+            const img = document.getElementById('modal-browser-img');
+            const rect = img.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const pt = document.getElementById('modal-click-pt');
+            pt.style.display = 'block';
+            pt.style.left = x + 'px';
+            pt.style.top = y + 'px';
+            setTimeout(() => pt.style.display = 'none', 500);
+
+            await fetch('/api/scan/browser-click', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({x, y})
+            });
+            setTimeout(refreshBrowser, 600);
+        }
+
+        async function typeText() {
+            const inp = document.getElementById('modal-type-input');
+            const text = inp.value;
+            if (!text) return;
+            await fetch('/api/scan/browser-type', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({text})
+            });
+            inp.value = '';
+            setTimeout(refreshBrowser, 500);
+        }
+
+        async function pressKey(key) {
+            await fetch('/api/scan/browser-key', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({key})
+            });
+            setTimeout(refreshBrowser, 500);
+        }
+
+        async function startScan() {
+            const btn = document.getElementById('scan-start-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ กำลังสแกน...';
+            document.getElementById('modal-status').textContent = '🚀 กำลังสแกน 7 กลุ่ม...';
+            try {
+                const r = await fetch('/api/scan/run-scan', {method: 'POST'});
+                const d = await r.json();
+                if (d.status === 'error') {
+                    document.getElementById('modal-status').textContent = '❌ ' + d.message;
+                    btn.disabled = false;
+                    btn.textContent = '🚀 เริ่มสแกน';
+                } else {
+                    document.getElementById('modal-status').textContent = '✅ กำลังสแกน... รอ 1-2 นาที';
+                    setTimeout(() => location.reload(), 1000);
+                }
+            } catch(e) {
+                document.getElementById('modal-status').textContent = '❌ Error';
+                btn.disabled = false;
+                btn.textContent = '🚀 เริ่มสแกน';
+            }
+        }
+
+        // Start polling when modal opens
+        document.addEventListener('DOMContentLoaded', () => {
+            const observer = new MutationObserver(() => {
+                const modal = document.getElementById('browser-modal');
+                if (!modal.classList.contains('hidden') && !modalPoll) {
+                    refreshBrowser();
+                    modalPoll = setInterval(refreshBrowser, 2000);
+                }
+            });
+            observer.observe(document.getElementById('browser-modal'), {attributes: true, attributeFilter: ['class']});
+        });
     </script>
 </body>
 </html>
