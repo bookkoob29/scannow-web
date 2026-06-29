@@ -146,28 +146,15 @@
         }
 
         async function triggerScan() {
-            const btn = document.getElementById('scan-btn');
-            const statusDiv = document.getElementById('scan-status');
-            const statusText = document.getElementById('status-text');
-            
-            btn.disabled = true; btn.classList.add('running');
-            btn.textContent = '⏳ กำลังสแกน...';
-            statusDiv.classList.remove('hidden');
-            statusText.textContent = 'เริ่มสแกน...';
-            
+            // Instead of direct scan, open interactive browser viewer
+            window.open('/api/scan/browser-view', 'browser_view', 'width=1300,height=900');
+            // Also POST to /api/scan to start the browser behind the scenes
             try {
                 const resp = await fetch('/api/scan', { method: 'POST' });
                 const data = await resp.json();
-                if (data.status === 'already_running') {
-                    showToast('❌ สแกนกำลังทำงานอยู่', 'error');
-                } else {
-                    showToast('✅ เริ่มสแกนแล้ว', 'success');
-                    pollStatus();
-                }
-            } catch (e) {
+                showToast('🖥️ เปิดบราวเซอร์แล้ว → กรุณาล็อกอิน Facebook', 'info');
+            } catch(e) {
                 showToast('❌ เกิดข้อผิดพลาด', 'error');
-                btn.disabled = false; btn.classList.remove('running');
-                btn.textContent = '🚀 SCANNOW';
             }
         }
 

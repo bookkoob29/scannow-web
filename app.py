@@ -12,6 +12,7 @@ from authlib.integrations.starlette_client import OAuth
 import config
 import database as db
 import render_scan
+import browser_session
 
 # Jinja2 environment (avoids Python 3.14 incompatibility in Jinja2Templates wrapper)
 _jinja_env = Environment(loader=FileSystemLoader(str(Path(__file__).parent / "templates")), cache_size=0)
@@ -425,72 +426,139 @@ async def api_scans(limit: int = 10, user=Depends(require_user)):
     scans = db.get_recent_scans(limit)
     return JSONResponse({"scans": scans})
 
-# ─── SCANNOW Trigger ───
-
-_status_history = []
+# Global browser session (interactive)
+_browser_session = None
+_browser_lock = threading.Lock()
 
 @app.post("/api/scan")
 async def trigger_scan(request: Request, user=Depends(require_user)):
-    global _scan_status
+    """Start interactive browser session — user logs into Facebook manually."""
+    global _scan_status, _browser_session
     if _scan_status["running"]:
         return JSONResponse({"status": "already_running", "message": "Scan already in progress"})
     
-    _scan_status = {"running": True, "last_output": "", "error": ""}
+    with _browser_lock:
+        if _browser_session and _browser_session.running:
+            return JSONResponse({"status": "session_exists", "message": "Browser already open"})
+        _browser_session = browser_session.BrowserSession()
     
-    def run_scan():
-        global _scan_status
+    def start_and_wait():
+        global _scan_status, _browser_session
         try:
-            scan_id = db.create_scan()
-            
-            # Decode Facebook cookies from env var
-            import base64, tempfile, json
-            fb_cookies_b64 = os.environ.get("FB_COOKIES", "")
-            cookies_file = None
-            if fb_cookies_b64:
-                try:
-                    cookies_data = json.loads(base64.b64decode(fb_cookies_b64).decode())
-                    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-                    json.dump(cookies_data, tmp)
-                    tmp.close()
-                    cookies_file = tmp.name
-                except Exception as e:
-                    _scan_status["error"] = f"Cookie decode error: {e}"
-            
-            # Run scan using Playwright on Render
-            leads = render_scan.scan_facebook(cookies_file=cookies_file)
-            
-            # Clean up temp file
-            if cookies_file and os.path.exists(cookies_file):
-                os.unlink(cookies_file)
-            
-            # Add dedup keys and save to database
-            for lead in leads:
-                if not lead.get("dk"):
-                    name = lead.get("n","").strip().lower()
-                    url = lead.get("url","")
-                    if url:
-                        clean_url = re.sub(r'\?.*', '', url.strip())
-                        lead["dk"] = name + "|" + clean_url
-                    else:
-                        lead["dk"] = name + lead.get("f","")[:120]
-            
-            new_in_db = db.upsert_leads(scan_id, leads) if leads else 0
-            db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
-            
-            # Send Telegram for new leads
-            if new_in_db > 0:
-                send_new_leads_telegram()
-            
-            _scan_status["running"] = False
-            _scan_status["last_output"] = f"✅ Scan complete: {new_in_db} new leads, {len(leads)} total"
-            
+            _scan_status = {"running": True, "last_output": "กำลังเปิด Facebook...", "error": "", "step": "browser_start"}
+            with _browser_lock:
+                _browser_session.start()
+            _scan_status["last_output"] = "✅ เบราว์เซอร์เปิดแล้ว — กรุณาล็อกอิน Facebook ในหน้าต่างที่แสดง"
+            _scan_status["step"] = "waiting_login"
         except Exception as e:
             _scan_status["running"] = False
             _scan_status["error"] = str(e)
-            _scan_status["last_output"] = f"❌ Error: {e}"
+            _scan_status["last_output"] = f"❌ เปิดเบราว์เซอร์ล้มเหลว: {e}"
     
-    threading.Thread(target=run_scan, daemon=True).start()
-    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน 7 กลุ่ม..."})
+    threading.Thread(target=start_and_wait, daemon=True).start()
+    return JSONResponse({"status": "started", "message": "🚀 กำลังเปิดเบราว์เซอร์..."})
+
+@app.get("/api/scan/browser-view")
+async def browser_view(user=Depends(require_user)):
+    """Return browser viewer page (interactive screenshot)."""
+    return HTMLResponse(BROWSER_VIEW_HTML)
+
+@app.get("/api/scan/browser-screenshot")
+async def browser_screenshot(user=Depends(require_user)):
+    """Get current browser screenshot as base64."""
+    global _browser_session
+    with _browser_lock:
+        if not _browser_session or not _browser_session.running:
+            return JSONResponse({"status": "no_session"})
+        b64 = _browser_session.screenshot()
+        if b64:
+            return JSONResponse({"status": "ok", "data": b64, "url": _browser_session.get_url()})
+        return JSONResponse({"status": "error"})
+
+@app.post("/api/scan/browser-click")
+async def browser_click(request: Request, user=Depends(require_user)):
+    """Click at coordinates (x, y) in the browser viewport."""
+    global _browser_session
+    body = await request.json()
+    x, y = body.get("x"), body.get("y")
+    with _browser_lock:
+        if not _browser_session or not _browser_session.running:
+            return JSONResponse({"status": "no_session"})
+        ok = _browser_session.click(x, y)
+        return JSONResponse({"status": "ok" if ok else "error"})
+
+@app.post("/api/scan/browser-type")
+async def browser_type(request: Request, user=Depends(require_user)):
+    """Type text into focused element."""
+    global _browser_session
+    body = await request.json()
+    text = body.get("text", "")
+    with _browser_lock:
+        if not _browser_session or not _browser_session.running:
+            return JSONResponse({"status": "no_session"})
+        ok = _browser_session.type_text(text)
+        return JSONResponse({"status": "ok" if ok else "error"})
+
+@app.post("/api/scan/browser-key")
+async def browser_key(request: Request, user=Depends(require_user)):
+    """Press a keyboard key (Enter, Tab, etc.)."""
+    global _browser_session
+    body = await request.json()
+    key = body.get("key", "")
+    with _browser_lock:
+        if not _browser_session or not _browser_session.running:
+            return JSONResponse({"status": "no_session"})
+        ok = _browser_session.press_key(key)
+        return JSONResponse({"status": "ok" if ok else "error"})
+
+@app.post("/api/scan/run-scan")
+async def run_facebook_scan(request: Request, user=Depends(require_user)):
+    """After login, run the Facebook scan using the current session."""
+    global _scan_status, _browser_session
+    with _browser_lock:
+        if not _browser_session or not _browser_session.running:
+            return JSONResponse({"status": "error", "message": "No browser session"})
+        if not _browser_session.is_logged_in():
+            return JSONResponse({"status": "error", "message": "ยังไม่ได้ล็อกอิน Facebook"})
+    
+    def do_scan():
+        global _scan_status, _browser_session
+        _scan_status["step"] = "scanning"
+        _scan_status["last_output"] = "กำลังสแกน 7 กลุ่ม..."
+        try:
+            scan_id = db.create_scan()
+            leads = _browser_session.run_facebook_scan()
+            new_in_db = db.upsert_leads(scan_id, leads) if leads else 0
+            db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
+            if new_in_db > 0:
+                send_new_leads_telegram()
+            with _browser_lock:
+                _browser_session.close()
+                _browser_session = None
+            _scan_status["running"] = False
+            _scan_status["last_output"] = f"✅ สแกนเสร็จ: {new_in_db} new / {len(leads)} total"
+            _scan_status["step"] = "done"
+        except Exception as e:
+            with _browser_lock:
+                _browser_session.close()
+                _browser_session = None
+            _scan_status["running"] = False
+            _scan_status["error"] = str(e)
+            _scan_status["last_output"] = f"❌ Error: {e}"
+            _scan_status["step"] = "error"
+    
+    threading.Thread(target=do_scan, daemon=True).start()
+    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน..."})
+
+@app.get("/api/scan/close-browser")
+async def close_browser(user=Depends(require_user)):
+    """Close the browser session."""
+    global _browser_session
+    with _browser_lock:
+        if _browser_session:
+            _browser_session.close()
+            _browser_session = None
+    return JSONResponse({"status": "closed"})
 
 
 @app.get("/api/scan-status")
