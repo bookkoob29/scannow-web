@@ -77,14 +77,22 @@ def scan_facebook(cookies_file=None, db_connector=None):
     LAST_SCREENSHOT = {"data": "", "path": "", "timestamp": ""}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox", "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage", "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-            ]
-        )
+        # Try headless shell first, fall back to full chromium
+        browser = None
+        for launch_args in [
+            {"headless": True, "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-blink-features=AutomationControlled"]},
+            {"headless": True, "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"], "channel": "chrome"},
+        ]:
+            try:
+                browser = p.chromium.launch(**launch_args)
+                print(f"  Browser launched")
+                break
+            except Exception as e:
+                print(f"  Retry: {str(e)[:60]}")
+                continue
+        if not browser:
+            # Last resort: try system chromium
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
         ctx = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
