@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+scannow.db
+*.db
+run.sh
+start.py
