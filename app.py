@@ -53,10 +53,13 @@ def require_user(request: Request):
 
 @app.get("/")
 async def root(request: Request):
-    user = get_user(request)
-    if not user:
-        return templates.TemplateResponse("login.html", {"request": request})
-    return RedirectResponse(url="/dashboard")
+    try:
+        user = get_user(request)
+        if not user:
+            return templates.TemplateResponse("login.html", {"request": request})
+        return RedirectResponse(url="/dashboard")
+    except Exception as e:
+        return HTMLResponse(f"<pre>Root error: {e}</pre>", status_code=500)
 
 @app.get("/login")
 async def login_page(request: Request):
