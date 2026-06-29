@@ -434,6 +434,14 @@ async def trigger_scan(request: Request, user=Depends(require_user)):
     if _scan_status["running"]:
         return JSONResponse({"status": "already_running", "message": "Scan already in progress"})
     
+    # Check if scan script exists (local machine only)
+    scan_script = config.SCAN_SCRIPT
+    if not scan_script or not os.path.exists(scan_script):
+        return JSONResponse({
+            "status": "local_only",
+            "message": "⚠️ การสแกน Facebook ทำงานเฉพาะบนเครื่องของคุณผ่าน Cron เท่านั้น\n\nกดปุ่มนี้บนเครื่อง Mac ที่ตั้งค่าไว้ หรือรอให้ Cron ทำงานและดึงข้อมูลล่าสุดจาก Dashboard",
+        })
+    
     _scan_status = {"running": True, "last_output": "", "error": ""}
     
     def run_scan():
