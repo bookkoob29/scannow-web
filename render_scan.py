@@ -1,7 +1,10 @@
 """SCANNOW Render — Facebook group scanning using Playwright (works on Render)."""
 import os, sys, json, re, time, tempfile, base64
 from datetime import datetime, timedelta
-from playwright.sync_api import sync_playwright
+# Lazy import — playwright may not be installed  
+def _get_playwright():
+    from playwright.sync_api import sync_playwright
+    return sync_playwright
 
 NOW = datetime.utcnow()
 TS = NOW.strftime("%Y%m%d_%H%M")
@@ -76,7 +79,7 @@ def scan_facebook(cookies_file=None, db_connector=None):
     seen_dedup = set()
     LAST_SCREENSHOT = {"data": "", "path": "", "timestamp": ""}
 
-    with sync_playwright() as p:
+    with _get_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
