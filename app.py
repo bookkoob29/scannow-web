@@ -497,6 +497,14 @@ async def trigger_scan(request: Request, user=Depends(require_user)):
 async def scan_status(user=Depends(require_user)):
     return JSONResponse(_scan_status)
 
+@app.get("/api/scan/screenshot")
+async def scan_screenshot(user=Depends(require_user)):
+    """Debug: return last scan screenshot as base64."""
+    ss = render_scan.get_last_screenshot()
+    if ss and ss.get("data"):
+        return HTMLResponse(f'<img src="data:image/png;base64,{ss["data"]}" style="max-width:100%"/><p>{ss.get("label","")} @ {ss.get("timestamp","")}</p>')
+    return JSONResponse({"status": "no_screenshot"})
+
 # ─── Telegram Notification ───
 
 def send_new_leads_telegram():
