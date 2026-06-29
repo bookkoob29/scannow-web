@@ -5,19 +5,299 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from jinja2 import Environment, FileSystemLoader
 from authlib.integrations.starlette_client import OAuth
 
 import config
 import database as db
 
-app = FastAPI(title="SCANNOW Web", version="1.0.0")
-app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET)
+# Jinja2 environment (avoids Python 3.14 incompatibility in Jinja2Templates wrapper)
+_jinja_env = Environment(loader=FileSystemLoader(str(Path(__file__).parent / "templates")), cache_size=0)
 
-# Templates
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Inline templates (avoids Jinja2Templates issues on newer Python)
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCANNOW — Bangkok Condo Demand</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Prompt', sans-serif; }
+        body { background: #1a1d23; }
+        .card { background: #2a2d35; border-radius: 12px; padding: 24px; }
+        .btn-primary { background: #2563EB; color: white; padding: 12px 32px; border-radius: 12px; font-weight: 600; transition: all 0.2s; }
+        .btn-primary:hover { background: #1D4ED8; transform: translateY(-1px); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .badge-new { background: #f59e0b; color: #1c1e21; }
+        .badge-raw { background: #059669; color: white; }
+        .badge-preview { background: #6b7280; color: white; }
+        .stat-box { background: #2a2d35; border-radius: 10px; padding: 16px; text-align: center; flex: 1; min-width: 120px; }
+        .stat-number { font-size: 28px; font-weight: 700; }
+        .scan-btn { background: linear-gradient(135deg, #059669, #047857); color: white; border: none; padding: 16px 48px; border-radius: 16px; font-size: 18px; font-weight: 700; cursor: pointer; transition: all 0.3s; }
+        .scan-btn:hover { transform: scale(1.02); box-shadow: 0 8px 25px rgba(5, 150, 105, 0.3); }
+        .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .scan-btn.running { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div class="card max-w-md w-full text-center">
+        <div class="text-5xl mb-4">🏢</div>
+        <h1 class="text-2xl font-bold text-white mb-2">SCANNOW</h1>
+        <p class="text-gray-400 mb-6">Bangkok Condo Demand Intelligence</p>
+        <a href="/auth/login" class="btn-primary inline-block">
+            เข้าสู่ระบบด้วย Google
+        </a>
+        <p class="text-gray-500 text-xs mt-4">เฉพาะผู้ได้รับอนุญาตเท่านั้น</p>
+    </div>
+</body>
+</html>
+"""
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCANNOW Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+        * { font-family: 'Prompt', sans-serif; }
+        body { background: #1a1d23; color: #e4e6eb; }
+        .card { background: #2a2d35; border-radius: 12px; padding: 20px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+        .badge-new { background: #f59e0b; color: #1c1e21; }
+        .badge-raw { background: #059669; color: white; }
+        .badge-preview { background: #6b7280; color: white; }
+        .stat-box { background: #2a2d35; border-radius: 10px; padding: 16px; text-align: center; min-width: 120px; }
+        .scan-btn { background: linear-gradient(135deg, #059669, #047857); color: white; border: none; padding: 14px 40px; border-radius: 14px; font-size: 16px; font-weight: 700; cursor: pointer; transition: all 0.3s; }
+        .scan-btn:hover { transform: scale(1.02); box-shadow: 0 8px 25px rgba(5,150,105,0.3); }
+        .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .scan-btn.running { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+        .lead-row:hover { background: #374151; }
+        .scroll-table { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px 12px; color: #9ca3af; font-weight: 500; border-bottom: 1px solid #374151; white-space: nowrap; }
+        td { padding: 8px 12px; border-bottom: 1px solid #1f2128; vertical-align: top; }
+        a { color: #60a5fa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .toast { position: fixed; bottom: 20px; right: 20px; z-index: 9999; padding: 12px 20px; border-radius: 8px; color: white; font-weight: 500; transform: translateY(150%); opacity: 0; transition: all 0.3s; }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { background: #16A34A; }
+        .toast.error { background: #DC2626; }
+        .toast.info { background: #2563EB; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <nav class="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-lg font-bold text-white">🏢 SCANNOW</span>
+            <span class="text-gray-400 text-sm">Bangkok Condo Demand</span>
+        </div>
+        <div class="flex items-center gap-3">
+            {% if user.picture %}<img src="{{ user.picture }}" class="w-8 h-8 rounded-full">{% endif %}
+            <span class="text-gray-300 text-sm">{{ user.name }}</span>
+            <a href="/logout" class="text-gray-400 text-sm hover:text-white">ออกจากระบบ</a>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-4 py-6">
+        <!-- Scan Button + Stats -->
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <button id="scan-btn" class="scan-btn" onclick="triggerScan()">
+                🚀 SCANNOW
+            </button>
+            <div class="flex flex-wrap gap-3">
+                <div class="stat-box"><div class="stat-number text-blue-400">{{ stats.total_leads }}</div><div class="text-gray-400 text-xs">Total Leads</div></div>
+                <div class="stat-box"><div class="stat-number text-amber-400">{{ stats.new_leads }}</div><div class="text-gray-400 text-xs">New</div></div>
+                <div class="stat-box"><div class="stat-number text-green-400">{{ stats.unique_groups }}</div><div class="text-gray-400 text-xs">Groups</div></div>
+            </div>
+        </div>
+
+        <!-- Status -->
+        <div id="scan-status" class="card mb-6 hidden">
+            <p class="text-sm" id="status-text"></p>
+        </div>
+
+        <!-- Search -->
+        <div class="flex gap-3 mb-4">
+            <input id="search-input" type="text" placeholder="ค้นหาชื่อ, กลุ่ม, ข้อความ..." 
+                   class="flex-1 px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                   oninput="debounceSearch()">
+            <select id="filter-select" class="px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-gray-200 text-sm"
+                    onchange="loadLeads()">
+                <option value="">ทั้งหมด</option>
+                <option value="new">ใหม่เท่านั้น</option>
+            </select>
+        </div>
+
+        <!-- Leads Table -->
+        <div class="card scroll-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>ชื่อ</th>
+                        <th>กลุ่ม</th>
+                        <th>งบ</th>
+                        <th>วันที่</th>
+                        <th>สถานะ</th>
+                        <th>เนื้อหา</th>
+                        <th>ลิงก์</th>
+                    </tr>
+                </thead>
+                <tbody id="leads-tbody">
+                    {% for lead in leads %}
+                    <tr class="lead-row">
+                        <td class="text-gray-400">{{ loop.index }}</td>
+                        <td class="font-medium">{{ lead.name }}</td>
+                        <td class="text-gray-400 text-xs">{{ lead.group_name[:25] }}</td>
+                        <td class="text-green-400 text-sm">{{ lead.budget[:20] }}</td>
+                        <td class="text-gray-400 text-xs">{{ lead.posted_date }}</td>
+                        <td>
+                            {% if lead.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
+                            <span class="badge {{ 'badge-raw' if lead.has_raw_text else 'badge-preview' }}">
+                                {{ 'RAW' if lead.has_raw_text else 'PREV' }}
+                            </span>
+                        </td>
+                        <td class="text-gray-400 text-xs max-w-xs truncate">{{ lead.full_text[:100] }}...</td>
+                        <td class="whitespace-nowrap">
+                            {% if lead.post_url %}<a href="{{ lead.post_url }}" target="_blank">🔗 Post</a>{% endif %}
+                            {% if lead.profile_id %}<a href="https://www.facebook.com/profile.php?id={{ lead.profile_id }}" target="_blank" class="ml-2">🔍 Profile</a>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Scan History -->
+        <div class="card mt-6">
+            <h3 class="font-bold text-gray-300 mb-3">📋 Scan History</h3>
+            <div class="text-sm text-gray-400">
+                {% for scan in scans %}
+                <div class="flex justify-between py-1 border-b border-gray-700 last:border-0">
+                    <span>{{ scan.started_at[:19] }}</span>
+                    <span class="{% if scan.status == 'completed' %}text-green-400{% else %}text-red-400{% endif %}">
+                        {{ scan.status }} — {{ scan.new_leads }} new / {{ scan.total_leads }} total
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        let searchTimer = null;
+        
+        function showToast(msg, type='info') {
+            const t = document.getElementById('toast');
+            t.textContent = msg; t.className = 'toast ' + type;
+            setTimeout(() => t.classList.add('show'), 50);
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        async function triggerScan() {
+            const btn = document.getElementById('scan-btn');
+            const statusDiv = document.getElementById('scan-status');
+            const statusText = document.getElementById('status-text');
+            
+            btn.disabled = true; btn.classList.add('running');
+            btn.textContent = '⏳ กำลังสแกน...';
+            statusDiv.classList.remove('hidden');
+            statusText.textContent = 'เริ่มสแกน...';
+            
+            try {
+                const resp = await fetch('/api/scan', { method: 'POST' });
+                const data = await resp.json();
+                if (data.status === 'already_running') {
+                    showToast('❌ สแกนกำลังทำงานอยู่', 'error');
+                } else {
+                    showToast('✅ เริ่มสแกนแล้ว', 'success');
+                    pollStatus();
+                }
+            } catch (e) {
+                showToast('❌ เกิดข้อผิดพลาด', 'error');
+                btn.disabled = false; btn.classList.remove('running');
+                btn.textContent = '🚀 SCANNOW';
+            }
+        }
+
+        async function pollStatus() {
+            const btn = document.getElementById('scan-btn');
+            const statusText = document.getElementById('status-text');
+            
+            const interval = setInterval(async () => {
+                try {
+                    const resp = await fetch('/api/scan-status');
+                    const data = await resp.json();
+                    if (data.last_output) {
+                        statusText.textContent = data.last_output.slice(-200);
+                    }
+                    if (!data.running) {
+                        clearInterval(interval);
+                        btn.disabled = false; btn.classList.remove('running');
+                        btn.textContent = '🚀 SCANNOW';
+                        statusText.textContent = data.error ? '❌ ' + data.error : '✅ สแกนเสร็จสมบูรณ์';
+                        showToast('✅ สแกนเสร็จแล้ว', 'success');
+                        setTimeout(() => location.reload(), 1000);
+                    }
+                } catch(e) {}
+            }, 2000);
+        }
+
+        function debounceSearch() {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => loadLeads(), 400);
+        }
+
+        document.getElementById('filter-select').addEventListener('change', loadLeads);
+
+        async function loadLeads() {
+            const q = document.getElementById('search-input').value;
+            const f = document.getElementById('filter-select').value;
+            try {
+                const resp = await fetch(`/api/leads?search=${encodeURIComponent(q)}&filter=${f}&limit=100`);
+                const data = await resp.json();
+                const tbody = document.getElementById('leads-tbody');
+                tbody.innerHTML = '';
+                data.leads.forEach((lead, i) => {
+                    const tr = document.createElement('tr'); tr.className = 'lead-row';
+                    const maxText = (lead.full_text || '').substring(0, 100);
+                    const newBadge = lead.is_new ? '<span class="badge badge-new">NEW</span>' : '';
+                    const rawBadge = lead.has_raw_text ? '<span class="badge badge-raw">RAW</span>' : '<span class="badge badge-preview">PREV</span>';
+                    const postLink = lead.post_url ? `<a href="${lead.post_url}" target="_blank">🔗 Post</a>` : '';
+                    const profLink = lead.profile_id ? `<a href="https://www.facebook.com/profile.php?id=${lead.profile_id}" target="_blank" class="ml-2">🔍 Profile</a>` : '';
+                    tr.innerHTML = `
+                        <td class="text-gray-400">${i+1}</td>
+                        <td class="font-medium">${lead.name || '?'}</td>
+                        <td class="text-gray-400 text-xs">${(lead.group_name||'').substring(0,25)}</td>
+                        <td class="text-green-400 text-sm">${(lead.budget||'N/A').substring(0,20)}</td>
+                        <td class="text-gray-400 text-xs">${lead.posted_date||''}</td>
+                        <td>${newBadge} ${rawBadge}</td>
+                        <td class="text-gray-400 text-xs max-w-xs truncate">${maxText}...</td>
+                        <td class="whitespace-nowrap">${postLink} ${profLink}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch(e) {}
+        }
+    </script>
+</body>
+</html>
+"""
+
+app = FastAPI(title="SCANNOW")
+
+# Session
+app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET)
 
 # OAuth setup
 oauth = OAuth()
@@ -55,9 +335,9 @@ def require_user(request: Request):
 async def root(request: Request):
     try:
         user = get_user(request)
-        if not user:
-            return templates.TemplateResponse("login.html", {"request": request})
-        return RedirectResponse(url="/dashboard")
+        if user:
+            return RedirectResponse(url="/dashboard")
+        return HTMLResponse(LOGIN_HTML)
     except Exception as e:
         return HTMLResponse(f"<pre>Root error: {e}</pre>", status_code=500)
 
@@ -65,7 +345,7 @@ async def root(request: Request):
 async def login_page(request: Request):
     if get_user(request):
         return RedirectResponse(url="/dashboard")
-    return templates.TemplateResponse("login.html", {"request": request})
+    return HTMLResponse(LOGIN_HTML)
 
 @app.get("/auth/login")
 async def auth_login(request: Request):
@@ -124,14 +404,10 @@ async def dashboard(request: Request, user=Depends(require_user)):
     stats = db.get_stats()
     scans = db.get_recent_scans(10)
     leads = db.get_leads(limit=50)
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "user": user,
-        "stats": stats,
-        "scans": scans,
-        "leads": leads,
-        "scan_status": _scan_status,
-    })
+    return HTMLResponse(_jinja_env.get_template("dashboard.html").render(
+        request=request, user=user, stats=stats, leads=leads, scans=scans,
+        scan_status=_scan_status,
+    ))
 
 @app.get("/api/stats")
 async def api_stats(user=Depends(require_user)):
