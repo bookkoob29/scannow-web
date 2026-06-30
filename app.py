@@ -457,11 +457,22 @@ async def trigger_scan(request: Request, user=Depends(require_user)):
             db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
             if new_in_db > 0: send_new_leads_telegram()
             _scan_status["running"] = False
-            _scan_status["last_output"] = f"✅ Scan: {new_in_db} new / {len(leads)} total"
+            _scan_status["last_output"] = f"✅ {new_in_db} new / {len(leads)} total"
         except Exception as e:
             _scan_status["running"] = False; _scan_status["error"] = str(e)
             _scan_status["last_output"] = f"❌ {e}"
-    threading.Thread(target=run_scan, daemon=True).start()
+    t = threading.Thread(target=run_scan, daemon=True)
+    t.start()
+    # Safety timeout: if scan takes > 180s, reset status
+    def watchdog():
+        global _scan_status
+        import time as _t
+        _t.sleep(200)
+        if _scan_status.get("running"):
+            _scan_status["running"] = False
+            _scan_status["error"] = "Timeout (180s)"
+            _scan_status["last_output"] = "❌ Scan timed out"
+    threading.Thread(target=watchdog, daemon=True).start()
     return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน 7 กลุ่ม..."})
 
 @app.get("/api/scan-status")
