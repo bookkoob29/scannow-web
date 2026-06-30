@@ -50,10 +50,10 @@
     <div class="max-w-6xl mx-auto px-4 py-6">
         <!-- Scan Button + Stats -->
         <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <button id="scan-btn" class="scan-btn" onclick="refreshData()" title="ข้อมูลมาจาก Cron บน Mac ของคุณ — อัปเดตอัตโนมัติทุกชั่วโมง">
+            <button id="scan-btn" class="scan-btn" onclick="refreshData()" title="พิมพ์ 'scan' ใน Hermes chat เพื่อเริ่มสแกน แล้วกดปุ่มนี้เพื่อดูผล">
                 🔄 Refresh Data
             </button>
-            <div class="text-gray-500 text-xs mt-1 w-full">📡 ข้อมูลจาก Cron บน Mac • อัปเดตทุก ชม.</div>
+            <div class="text-gray-500 text-xs mt-1 w-full">💬 พิมพ์ <b style="color:#60a5fa">scan</b> ใน Hermes chat เพื่อสแกน Facebook • แล้วกด Refresh ดูผล</div>
             <div class="flex flex-wrap gap-3">
                 <div class="stat-box"><div class="stat-number text-blue-400">{{ stats.total_leads }}</div><div class="text-gray-400 text-xs">Total Leads</div></div>
                 <div class="stat-box"><div class="stat-number text-amber-400">{{ stats.new_leads }}</div><div class="text-gray-400 text-xs">New</div></div>
