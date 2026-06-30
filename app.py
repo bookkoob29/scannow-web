@@ -506,6 +506,105 @@ async def ingest_leads(request: Request, authorization: str = Header(default="")
         send_new_leads_telegram()
     return JSONResponse({"status": "ok", "new_leads": new_count, "total_leads": len(leads)})
 
+def send_new_leads_telegram():
+    """Send HTML of new leads via Telegram."""
+    new_leads = db.get_new_leads()
+    if not new_leads:
+        return
+    
+    # Build a mini HTML for new leads only
+    now = datetime.now().strftime("%Y%m%d_%H%M")
+    cards = []
+    for i, lead in enumerate(new_leads, 1):
+        name = lead.get("name","?")
+        group = lead.get("group_name","?")
+        budget = lead.get("budget","N/A")
+        url = lead.get("post_url","")
+        text = lead.get("full_text","")[:200]
+        
+        pu = f'https://www.facebook.com/profile.php?id={lead.get("profile_id","")}' if lead.get("profile_id") else ""
+        pb = f'<a href="{pu}" style="color:#60a5fa" target="_blank">Profile</a>' if pu else ""
+        pl = f'<a href="{url}" style="color:#34d399" target="_blank">View Post</a>' if url else ""
+        
+        cards.append(
+            '<div style="background:#2a2d35;border-radius:10px;padding:12px;margin:8px 0">'
+            f'<h3 style="color:#60a5fa;margin:0;font-size:14px">#{i} {name}'
+            f'<span style="background:#f59e0b;color:#1c1e21;padding:0px 6px;border-radius:3px;font-size:9px;font-weight:700;margin-left:4px">NEW</span></h3>'
+            f'<div style="color:#9ca3af;font-size:12px;margin-top:6px">'
+            f'<span style="background:#374151;color:#9ca3af;padding:2px 6px;border-radius:4px;font-size:10px">{group}</span>'
+            f' | <b style="color:#34d399">{budget}</b><br>'
+            f'{text}</div>'
+            f'<div style="margin-top:4px;font-size:11px">{pb} {pl}</div></div>'
+        )
+    
+    html = (
+        '<!DOCTYPE html><html><head><meta charset="UTF-8">'
+        f'<title>SCANNOW New Leads {now}</title></head>'
+        f'<body style="background:#1a1d23;color:#e4e6eb;font-family:sans-serif;padding:15px">'
+        f'<h2 style="color:#fff">SCANNOW — New Leads</h2>'
+        f'<p style="color:#9ca3af">{now} | {len(new_leads)} new</p>'
+        + "".join(cards) + "</body></html>"
+    )
+    
+    # Write to temp file and send
+    tmp = os.path.join(tempfile.gettempdir(), f"scannow_new_{now}.html")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(html)
+    
+    os.system(f"python3 {config.TELEGRAM_SENDER} {tmp}")
+    os.remove(tmp)
+    
+    # Mark as notified
+    db.mark_leads_notified(len(new_leads))
+
+
+# ─── Health check (for Render) ───
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "db": "postgres" if config.USE_POSTGRES else "sqlite"}
+
+
+# ─── Ingest API (local cron pushes results here) ───
+
+@app.post("/api/ingest")
+async def ingest_leads(request: Request, authorization: str = Header(default="")):
+    # Verify API key
+    expected_key = config.INGEST_API_KEY
+    if expected_key:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing Authorization header")
+        token = authorization.replace("Bearer ", "").strip()
+        if not hmac.compare_digest(token, expected_key):
+            raise HTTPException(status_code=403, detail="Invalid API key")
+    
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    
+    leads = body.get("leads", [])
+    if not leads:
+        return JSONResponse({"status": "error", "message": "No leads provided"})
+    
+    scan_id = db.create_scan()
+    new_count = db.upsert_leads(scan_id, leads)
+    db.finish_scan(scan_id, new_count, len(leads), body.get("raw_count", 0))
+    
+    # Send Telegram notification for new leads
+    if new_count > 0:
+        send_new_leads_telegram()
+    
+    return JSONResponse({
+        "status": "ok",
+        "scan_id": scan_id,
+        "new_leads": new_count,
+        "total_leads": len(leads),
+    })
+
+
+# ─── Startup ───
+
 # ─── Startup ───
 @app.on_event("startup")
 async def startup():
