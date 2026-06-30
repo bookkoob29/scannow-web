@@ -610,6 +610,16 @@ async def ingest_leads(request: Request, authorization: str = Header(default="")
 async def startup():
     db.init_db()
 
+@app.post("/api/reset")
+async def reset_data(authorization: str = Header(default="")):
+    """Reset all leads and scans (requires ingest API key)."""
+    expected = config.INGEST_API_KEY
+    token = authorization.replace("Bearer ", "").strip() if authorization.startswith("Bearer ") else ""
+    if expected and not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid key")
+    db.reset_all()
+    return JSONResponse({"status": "ok", "message": "All data cleared"})
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=config.HOST, port=config.PORT)

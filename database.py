@@ -211,3 +211,12 @@ def get_stats():
     row = cur.fetchone()
     conn.close()
     return {"total_leads": total, "new_leads": new_leads, "unique_groups": groups, "last_scan": row[0] if row else None}
+
+def reset_all():
+    """Delete all leads and scans (for fresh start)."""
+    conn = get_conn(); cur = conn.cursor()
+    if USE_POSTGRES:
+        cur.execute("DELETE FROM leads"); cur.execute("DELETE FROM scans")
+    else:
+        cur.execute("DELETE FROM leads"); cur.execute("DELETE FROM scans")
+    conn.commit(); conn.close()
