@@ -320,7 +320,8 @@ _scan_status = {"running": False, "last_output": "", "error": ""}
 
 def get_user(request: Request):
     user = request.session.get("user")
-    if user and user.get("email") == config.ALLOWED_EMAIL:
+    allowed = [e.strip() for e in config.ALLOWED_EMAIL.split(",")]
+    if user and user.get("email") in allowed:
         return user
     return None
 
@@ -382,7 +383,8 @@ async def auth_callback(request: Request):
             resp = await oauth.google.get("https://www.googleapis.com/oauth2/v2/userinfo")
             user_info = resp.json()
         email = user_info.get("email", "")
-        if email != config.ALLOWED_EMAIL:
+        allowed = [e.strip() for e in config.ALLOWED_EMAIL.split(",")]
+        if email not in allowed:
             return HTMLResponse("❌ Access denied. Only sorlakom.thana@gmail.com can access.", status_code=403)
         request.session["user"] = {
             "email": email,
