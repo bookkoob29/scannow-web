@@ -50,9 +50,10 @@
     <div class="max-w-6xl mx-auto px-4 py-6">
         <!-- Scan Button + Stats -->
         <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <button id="scan-btn" class="scan-btn" onclick="triggerScan()">
-                🚀 SCANNOW
+            <button id="scan-btn" class="scan-btn" onclick="refreshData()" title="ข้อมูลมาจาก Cron บน Mac ของคุณ — อัปเดตอัตโนมัติทุกชั่วโมง">
+                🔄 Refresh Data
             </button>
+            <div class="text-gray-500 text-xs mt-1 w-full">📡 ข้อมูลจาก Cron บน Mac • อัปเดตทุก ชม.</div>
             <div class="flex flex-wrap gap-3">
                 <div class="stat-box"><div class="stat-number text-blue-400">{{ stats.total_leads }}</div><div class="text-gray-400 text-xs">Total Leads</div></div>
                 <div class="stat-box"><div class="stat-number text-amber-400">{{ stats.new_leads }}</div><div class="text-gray-400 text-xs">New</div></div>
@@ -145,24 +146,12 @@
             setTimeout(() => t.classList.remove('show'), 3000);
         }
 
-        async function triggerScan() {
+        async function refreshData() {
             const btn = document.getElementById('scan-btn');
             btn.disabled = true; btn.classList.add('running');
-            btn.textContent = '⏳ กำลังสแกน...';
-            try {
-                const resp = await fetch('/api/scan', { method: 'POST' });
-                const data = await resp.json();
-                if (data.status === 'already_running') {
-                    showToast('❌ สแกนกำลังทำงานอยู่', 'error');
-                } else {
-                    showToast('✅ เริ่มสแกนแล้ว', 'success');
-                    pollStatus();
-                }
-            } catch (e) {
-                showToast('❌ เกิดข้อผิดพลาด', 'error');
-                btn.disabled = false; btn.classList.remove('running');
-                btn.textContent = '🚀 SCANNOW';
-            }
+            btn.textContent = '⏳ กำลังโหลด...';
+            showToast('🔄 กำลังโหลดข้อมูลล่าสุด...', 'info');
+            setTimeout(() => location.reload(), 500);
         }
 
         async function pollStatus() {
