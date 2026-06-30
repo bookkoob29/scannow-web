@@ -83,41 +83,23 @@
             <table>
                 <thead>
                     <tr>
-                        <th>#</th>
-                        <th>ชื่อ</th>
-                        <th>กลุ่ม</th>
-                        <th>งบ</th>
-                        <th>วันที่</th>
-                        <th>สถานะ</th>
+                        <th onclick="sortTable('index')" style="cursor:pointer;user-select:none"># <span class="sort-arrow"></span></th>
+                        <th onclick="sortTable('name')" style="cursor:pointer;user-select:none">ชื่อ <span class="sort-arrow"></span></th>
+                        <th onclick="sortTable('group_name')" style="cursor:pointer;user-select:none">กลุ่ม <span class="sort-arrow"></span></th>
+                        <th onclick="sortTable('budget')" style="cursor:pointer;user-select:none">งบ <span class="sort-arrow"></span></th>
+                        <th onclick="sortTable('posted_date')" style="cursor:pointer;user-select:none">วันที่ <span class="sort-arrow"></span></th>
+                        <th onclick="sortTable('is_new')" style="cursor:pointer;user-select:none">สถานะ <span class="sort-arrow"></span></th>
                         <th>เนื้อหา</th>
                         <th>ลิงก์</th>
                     </tr>
                 </thead>
-                <tbody id="leads-tbody">
-                    {% for lead in leads %}
-                    <tr class="lead-row">
-                        <td class="text-gray-400">{{ loop.index }}</td>
-                        <td class="font-medium">{{ lead.name }}</td>
-                        <td class="text-gray-400 text-xs">{{ lead.group_name[:25] }}</td>
-                        <td class="text-green-400 text-sm">{{ lead.budget[:20] }}</td>
-                        <td class="text-gray-400 text-xs">{{ lead.posted_date }}</td>
-                        <td>
-                            {% if lead.is_new %}<span class="badge badge-new">NEW</span>{% endif %}
-                            <span class="badge {{ 'badge-raw' if lead.has_raw_text else 'badge-preview' }}">
-                                {{ 'RAW' if lead.has_raw_text else 'PREV' }}
-                            </span>
-                        </td>
-                        <td class="text-gray-400 text-xs max-w-xs truncate">{{ lead.full_text[:100] }}...</td>
-                        <td class="whitespace-nowrap">
-                            {% if lead.post_url %}<a href="{{ lead.post_url }}" target="_blank">🔗 Post</a>{% endif %}
-                            {% if lead.profile_id %}<a href="https://www.facebook.com/profile.php?id={{ lead.profile_id }}" target="_blank" class="ml-2">🔍 Profile</a>{% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
+                <tbody id="leads-tbody"></tbody>
             </table>
         </div>
 
+        <script>
+const LEADS_DATA = {{ leads | tojson | safe }};
+</script>
         <!-- Scan History -->
         <div class="card mt-6">
             <h3 class="font-bold text-gray-300 mb-3">📋 Scan History</h3>
@@ -213,6 +195,79 @@
                 });
             } catch(e) {}
         }
+        
+        // ─── Client-side Sorting ───
+        let sortField = '';
+        let sortDir = 1;
+        
+        function renderLeads(data) {
+            const tbody = document.getElementById('leads-tbody');
+            tbody.innerHTML = '';
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-gray-500 text-center py-8">No leads found</td></tr>';
+                return;
+            }
+            data.forEach((lead, i) => {
+                const maxText = (lead.full_text || '').substring(0, 100);
+                const newBadge = lead.is_new ? '<span class="badge badge-new">NEW</span>' : '';
+                const rawBadge = lead.has_raw_text ? '<span class="badge badge-raw">RAW</span>' : '<span class="badge badge-preview">PREV</span>';
+                const postLink = lead.post_url ? `<a href="${lead.post_url}" target="_blank">🔗 Post</a>` : '';
+                const profLink = lead.profile_id ? `<a href="https://www.facebook.com/profile.php?id=${lead.profile_id}" target="_blank" class="ml-2">🔍 Profile</a>` : '';
+                const tr = document.createElement('tr'); tr.className = 'lead-row';
+                tr.innerHTML = `
+                    <td class="text-gray-400">${i+1}</td>
+                    <td class="font-medium">${lead.name || '?'}</td>
+                    <td class="text-gray-400 text-xs">${(lead.group_name||'').substring(0,25)}</td>
+                    <td class="text-green-400 text-sm">${(lead.budget||'N/A').substring(0,20)}</td>
+                    <td class="text-gray-400 text-xs">${lead.posted_date||''}</td>
+                    <td>${newBadge} ${rawBadge}</td>
+                    <td class="text-gray-400 text-xs max-w-xs truncate">${maxText}...</td>
+                    <td class="whitespace-nowrap">${postLink} ${profLink}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+            // Update sort arrows
+            document.querySelectorAll('th .sort-arrow').forEach(el => el.textContent = '');
+            if (sortField) {
+                document.querySelectorAll('th').forEach(th => {
+                    if (th.getAttribute('onclick') && th.getAttribute('onclick').includes("sortTable('" + sortField + "')")) {
+                        let arrow = th.querySelector('.sort-arrow');
+                        if (arrow) arrow.textContent = sortDir === 1 ? ' ▲' : ' ▼';
+                    }
+                });
+            }
+        }
+        
+        function sortTable(field) {
+            if (sortField === field) { sortDir *= -1; }
+            else { sortField = field; sortDir = 1; }
+            let data = Array.isArray(LEADS_DATA) ? [...LEADS_DATA] : [];
+            if (field !== 'index') {
+                data.sort((a, b) => {
+                    let va = (a[field] || '').toString().toLowerCase();
+                    let vb = (b[field] || '').toString().toLowerCase();
+                    if (field === 'is_new') { va = a.is_new ? 1 : 0; vb = b.is_new ? 1 : 0; }
+                    return va < vb ? -sortDir : va > vb ? sortDir : 0;
+                });
+            }
+            renderLeads(data);
+        }
+        
+        // Initial render
+        if (typeof LEADS_DATA !== 'undefined' && LEADS_DATA.length > 0) {
+            renderLeads(LEADS_DATA);
+        }
+        
+        // Also render on search load
+        const _origLoad = loadLeads;
+        loadLeads = function() {
+            const q = document.getElementById('search-input').value;
+            const f = document.getElementById('filter-select').value;
+            fetch(`/api/leads?search=${encodeURIComponent(q)}&filter=${f}&limit=500`)
+                .then(r => r.json())
+                .then(d => { if (d.leads) renderLeads(d.leads); })
+                .catch(() => {});
+        };
     </script>
 
     
