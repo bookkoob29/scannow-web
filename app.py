@@ -404,7 +404,7 @@ async def logout(request: Request):
 async def dashboard(request: Request, user=Depends(require_user)):
     stats = db.get_stats()
     scans = db.get_recent_scans(10)
-    leads = db.get_leads(limit=50)
+    leads = db.get_leads(limit=500)
     return HTMLResponse(_jinja_env.get_template("dashboard.html").render(
         request=request, user=user, stats=stats, leads=leads, scans=scans,
         scan_status=_scan_status,

@@ -167,13 +167,13 @@ def get_leads(search="", status_filter="", limit=100):
         q = "SELECT * FROM leads WHERE 1=1"; p = []
         if search: q += " AND (name ILIKE %s OR group_name ILIKE %s OR full_text ILIKE %s)"; p.extend([f"%{search}%"]*3)
         if status_filter == "new": q += " AND is_new=1"
-        q += " ORDER BY first_seen ASC LIMIT %s"; p.append(limit)
+        q += " ORDER BY first_seen DESC LIMIT %s"; p.append(limit)
         cur.execute(q, p)
     else:
         q = "SELECT * FROM leads WHERE 1=1"; p = []
         if search: q += " AND (name LIKE ? OR group_name LIKE ? OR full_text LIKE ?)"; p.extend([f"%{search}%"]*3)
         if status_filter == "new": q += " AND is_new=1"
-        q += " ORDER BY first_seen ASC LIMIT ?"; p.append(limit)
+        q += " ORDER BY first_seen DESC LIMIT ?"; p.append(limit)
         cur.execute(q, p)
     rows = cur.fetchall(); conn.close()
     return [dict(r) for r in rows]
