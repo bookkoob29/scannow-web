@@ -10,7 +10,7 @@ def get_conn():
         return conn
     os.makedirs(os.path.dirname(DB_PATH) if DB_PATH else ".", exist_ok=True)
     import sqlite3
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
