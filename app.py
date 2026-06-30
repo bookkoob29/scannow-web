@@ -424,3 +424,82 @@ async def api_leads(search: str = "", filter: str = "", limit: int = 100, user=D
 async def api_scans(limit: int = 10, user=Depends(require_user)):
     scans = db.get_recent_scans(limit)
     return JSONResponse({"scans": scans})
+
+_scan_status = {"running": False, "last_output": "", "error": ""}
+
+@app.post("/api/scan")
+async def trigger_scan(request: Request, user=Depends(require_user)):
+    global _scan_status
+    if _scan_status["running"]:
+        return JSONResponse({"status": "already_running", "message": "Scan already in progress"})
+    _scan_status = {"running": True, "last_output": "", "error": ""}
+    def run_scan():
+        global _scan_status
+        try:
+            scan_id = db.create_scan()
+            import base64, tempfile, json as jmod
+            fb_b64 = os.environ.get("FB_COOKIES", "")
+            cookies_file = None
+            if fb_b64:
+                try:
+                    cd = jmod.loads(base64.b64decode(fb_b64).decode())
+                    t = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+                    jmod.dump(cd, t); t.close(); cookies_file = t.name
+                except Exception as ce:
+                    _scan_status["error"] = f"Cookie: {ce}"
+            leads = render_scan.scan_facebook(cookies_file=cookies_file)
+            if cookies_file and os.path.exists(cookies_file): os.unlink(cookies_file)
+            for l in leads:
+                if not l.get("dk"):
+                    n = l.get("n","").strip().lower(); u = l.get("url","")
+                    l["dk"] = n + "|" + (u[:120] if u else "")
+            new_in_db = db.upsert_leads(scan_id, leads) if leads else 0
+            db.finish_scan(scan_id, new_in_db, len(leads), sum(1 for l in leads if l.get("ft")))
+            if new_in_db > 0: send_new_leads_telegram()
+            _scan_status["running"] = False
+            _scan_status["last_output"] = f"✅ Scan: {new_in_db} new / {len(leads)} total"
+        except Exception as e:
+            _scan_status["running"] = False; _scan_status["error"] = str(e)
+            _scan_status["last_output"] = f"❌ {e}"
+    threading.Thread(target=run_scan, daemon=True).start()
+    return JSONResponse({"status": "started", "message": "🚀 กำลังสแกน 7 กลุ่ม..."})
+
+@app.get("/api/scan-status")
+async def scan_status(user=Depends(require_user)):
+    return JSONResponse(_scan_status)
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "db": "postgres" if config.USE_POSTGRES else "sqlite"}
+
+@app.post("/api/ingest")
+async def ingest_leads(request: Request, authorization: str = Header(default="")):
+    expected_key = config.INGEST_API_KEY
+    if expected_key:
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing Authorization header")
+        token = authorization.replace("Bearer ", "").strip()
+        if not hmac.compare_digest(token, expected_key):
+            raise HTTPException(status_code=403, detail="Invalid API key")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    leads = body.get("leads", [])
+    if not leads:
+        return JSONResponse({"status": "error", "message": "No leads provided"})
+    scan_id = db.create_scan()
+    new_count = db.upsert_leads(scan_id, leads)
+    db.finish_scan(scan_id, new_count, len(leads), body.get("raw_count", 0))
+    if new_count > 0:
+        send_new_leads_telegram()
+    return JSONResponse({"status": "ok", "new_leads": new_count, "total_leads": len(leads)})
+
+# ─── Startup ───
+@app.on_event("startup")
+async def startup():
+    db.init_db()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=config.HOST, port=config.PORT)
