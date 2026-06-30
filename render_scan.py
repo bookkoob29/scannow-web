@@ -79,7 +79,7 @@ def scan_facebook(cookies_file=None, db_connector=None):
     seen_dedup = set()
     LAST_SCREENSHOT = {"data": "", "path": "", "timestamp": ""}
 
-    with _get_playwright() as p:
+    with _get_playwright()() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
